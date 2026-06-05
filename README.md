@@ -1,7 +1,6 @@
 # Tomark
 
-App desktop (Windows) que converte arquivos para **Markdown** numa janela com
-tema escuro — sem terminal, sem linha de comando.
+App desktop (Windows) que converte arquivos para **Markdown** — sem terminal, sem linha de comando.
 
 Selecione um arquivo, clique **Converter**, veja a pré-visualização e salve o
 `.md`. Conversão 100% offline.
