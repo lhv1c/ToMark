@@ -1,21 +1,23 @@
 """
-Tomark — janela desktop (dark mode) para converter arquivos em Markdown.
+Tomark — janela desktop para converter arquivos em Markdown (em lote).
 
 Envolve a API publica do markitdown: MarkItDown().convert(path).markdown
-Sem terminal, sem linha de comando. Selecione um arquivo, converta, salve .md.
+Selecione varios arquivos, converta, e cada .md e salvo ao lado do original.
 """
 
 import os
 import sys
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk, scrolledtext
+from tkinter import filedialog
+
+import customtkinter as ctk
 
 from markitdown import MarkItDown
-from markitdown import MarkItDownException
+
+from paths import resolve_output_path
 
 
-# Filtros do dialogo de "abrir arquivo" (formatos comuns suportados offline).
 FILE_TYPES = [
     ("Todos suportados", "*.pdf *.docx *.doc *.xlsx *.xls *.pptx "
                          "*.html *.htm *.csv *.txt *.md *.json *.xml *.epub"),
@@ -28,259 +30,196 @@ FILE_TYPES = [
     ("Todos os arquivos", "*.*"),
 ]
 
-
-# Paleta dark mode.
-DARK = {
-    "bg": "#1e1e1e",
-    "panel": "#252526",
-    "fg": "#e6e6e6",
-    "muted": "#9a9a9a",
-    "entry_bg": "#2d2d30",
-    "btn": "#3a3d41",
-    "btn_active": "#4a4d52",
-    "btn_disabled": "#2a2a2a",
-    "fg_disabled": "#6a6a6a",
-    "accent": "#4cc2ff",
-    "trough": "#333337",
-    "select": "#264f78",
-    "border": "#3c3c3c",
-}
+BADGE = {"pendente": "•", "convertendo": "⟳", "ok": "✓", "erro": "✕"}
+BADGE_COLOR = {"pendente": "#9a9a9a", "convertendo": "#4cc2ff",
+               "ok": "#4caf72", "erro": "#ff6b6b"}
 
 
 def _resource_path(name):
-    """Caminho de um recurso, funcionando tanto no fonte quanto no exe (PyInstaller)."""
+    """Caminho de um recurso, funcionando no fonte e no exe (PyInstaller)."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, name)
 
 
-class MarkItDownApp:
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        self.md = MarkItDown()  # plugins off; somente conversores embutidos
-        self.source_path = None
-        self.result_markdown = ""
+class FileItem:
+    def __init__(self, path):
+        self.path = path
+        self.status = "pendente"   # pendente | convertendo | ok | erro
+        self.markdown = None
+        self.error = None
+        self.output_path = None
 
-        # Estado da barra de progresso animada.
-        self._progress_value = 0.0
-        self._progress_job = None
+
+class MarkItDownApp:
+    def __init__(self, root: ctk.CTk):
+        self.root = root
+        self.md = MarkItDown()          # plugins off; conversores embutidos
+        self.items = []                 # list[FileItem]
+        self.row_buttons = []           # botao por item (mesma ordem de items)
+        self.selected = None            # indice do item selecionado
 
         root.title("Tomark — Conversor para Markdown")
-        root.geometry("820x640")
-        root.minsize(640, 480)
+        root.geometry("900x640")
+        root.minsize(680, 480)
         try:
             root.iconbitmap(_resource_path("icon.ico"))
         except Exception:  # noqa: BLE001 — sem icone nao e fatal
             pass
 
-        self._apply_dark_theme()
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("dark-blue")
         self._build_ui()
 
-    def _apply_dark_theme(self):
-        d = DARK
-        self.root.configure(bg=d["bg"])
-
-        style = ttk.Style()
-        style.theme_use("clam")  # tema mais customizavel que o nativo
-
-        style.configure(".", background=d["bg"], foreground=d["fg"],
-                        fieldbackground=d["entry_bg"], bordercolor=d["border"],
-                        focuscolor=d["bg"])
-        style.configure("TFrame", background=d["bg"])
-        style.configure("TLabel", background=d["bg"], foreground=d["fg"])
-        style.configure("Muted.TLabel", background=d["bg"], foreground=d["muted"])
-        style.configure("Status.TLabel", background=d["panel"],
-                        foreground=d["muted"])
-        style.configure("Percent.TLabel", background=d["bg"],
-                        foreground=d["accent"], font=("Segoe UI", 10, "bold"))
-
-        style.configure("TButton", background=d["btn"], foreground=d["fg"],
-                        borderwidth=0, padding=(12, 6), focuscolor=d["bg"])
-        style.map("TButton",
-                  background=[("active", d["btn_active"]),
-                              ("disabled", d["btn_disabled"])],
-                  foreground=[("disabled", d["fg_disabled"])])
-
-        style.configure("Dark.Horizontal.TProgressbar",
-                        background=d["accent"], troughcolor=d["trough"],
-                        bordercolor=d["trough"], lightcolor=d["accent"],
-                        darkcolor=d["accent"], thickness=14)
-
     def _build_ui(self):
-        d = DARK
-        pad = {"padx": 12, "pady": 6}
+        # topo: selecionar + contador + converter
+        top = ctk.CTkFrame(self.root, fg_color="transparent")
+        top.pack(fill="x", padx=16, pady=(16, 8))
+        ctk.CTkButton(top, text="Selecionar arquivos…",
+                      command=self.on_select).pack(side="left")
+        self.count_var = tk.StringVar(value="nenhum arquivo")
+        ctk.CTkLabel(top, textvariable=self.count_var,
+                     text_color="#9a9a9a").pack(side="left", padx=12)
+        self.convert_btn = ctk.CTkButton(
+            top, text="Converter", fg_color="#2ea043", hover_color="#278739",
+            command=self.on_convert, state="disabled")
+        self.convert_btn.pack(side="right")
 
-        top = ttk.Frame(self.root)
-        top.pack(fill="x", **pad)
-        ttk.Label(
-            top,
-            text="Converta PDF, Word, Excel, PowerPoint, HTML, CSV e texto para Markdown.",
-            font=("Segoe UI", 10),
-        ).pack(anchor="w")
+        # meio: lista (esq) + preview (dir)
+        mid = ctk.CTkFrame(self.root, fg_color="transparent")
+        mid.pack(fill="both", expand=True, padx=16, pady=8)
 
-        # Linha: selecionar arquivo
-        row = ttk.Frame(self.root)
-        row.pack(fill="x", **pad)
-        self.select_btn = ttk.Button(
-            row, text="Selecionar arquivo…", command=self.on_select
-        )
-        self.select_btn.pack(side="left")
-        self.path_var = tk.StringVar(value="Nenhum arquivo selecionado.")
-        ttk.Label(row, textvariable=self.path_var, style="Muted.TLabel").pack(
-            side="left", padx=10
-        )
+        self.list_frame = ctk.CTkScrollableFrame(
+            mid, width=300, label_text="Arquivos")
+        self.list_frame.pack(side="left", fill="y")
 
-        # Linha: acoes
-        actions = ttk.Frame(self.root)
-        actions.pack(fill="x", **pad)
-        self.convert_btn = ttk.Button(
-            actions, text="Converter", command=self.on_convert, state="disabled"
-        )
-        self.convert_btn.pack(side="left")
-        self.save_btn = ttk.Button(
-            actions, text="Salvar .md…", command=self.on_save, state="disabled"
-        )
-        self.save_btn.pack(side="left", padx=8)
+        self.preview = ctk.CTkTextbox(mid, wrap="word", font=("Consolas", 12))
+        self.preview.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        self.preview.configure(state="disabled")
 
-        # Progresso em porcentagem (barra + rotulo "NN%")
-        self.percent_var = tk.StringVar(value="0%")
-        ttk.Label(actions, textvariable=self.percent_var,
-                  style="Percent.TLabel", width=5, anchor="e").pack(side="right")
-        self.progress = ttk.Progressbar(
-            actions, style="Dark.Horizontal.TProgressbar",
-            mode="determinate", maximum=100, length=200
-        )
-        self.progress.pack(side="right", padx=8)
-
-        # Preview
-        ttk.Label(self.root, text="Pré-visualização do Markdown:").pack(
-            anchor="w", padx=12
-        )
-        self.preview = scrolledtext.ScrolledText(
-            self.root, wrap="word", font=("Consolas", 10),
-            bg=d["entry_bg"], fg=d["fg"], insertbackground=d["fg"],
-            selectbackground=d["select"], selectforeground=d["fg"],
-            relief="flat", borderwidth=8, highlightthickness=1,
-            highlightbackground=d["border"], highlightcolor=d["accent"],
-        )
-        self.preview.pack(fill="both", expand=True, padx=12, pady=(0, 8))
-
-        # Status
+        # rodape: status resumo
         self.status_var = tk.StringVar(value="Pronto.")
-        ttk.Label(self.root, textvariable=self.status_var, style="Status.TLabel",
-                  anchor="w", padding=(8, 4)).pack(fill="x", side="bottom")
+        ctk.CTkLabel(self.root, textvariable=self.status_var, anchor="w",
+                     text_color="#9a9a9a").pack(fill="x", padx=16, pady=(0, 12))
 
-    # ---- barra de progresso animada ----
-    # markitdown.convert() e uma chamada unica sem eventos de progresso, entao
-    # nao ha % real. A barra sobe de forma assintotica ate ~95% enquanto converte
-    # e salta para 100% ao concluir — feedback visual honesto sobre o limite.
+    # ---- fila ----
 
-    def _start_progress(self):
-        self._progress_value = 0.0
-        self.progress["value"] = 0
-        self.percent_var.set("0%")
-        self._tick_progress()
+    def _row_text(self, item):
+        return f"{BADGE[item.status]}  {os.path.basename(item.path)}"
 
-    def _tick_progress(self):
-        # Aproxima 95% em passos decrescentes (ease-out).
-        remaining = 95.0 - self._progress_value
-        self._progress_value += max(remaining * 0.08, 0.3)
-        if self._progress_value > 95.0:
-            self._progress_value = 95.0
-        self.progress["value"] = self._progress_value
-        self.percent_var.set(f"{int(self._progress_value)}%")
-        self._progress_job = self.root.after(120, self._tick_progress)
+    def _rebuild_list(self):
+        for b in self.row_buttons:
+            b.destroy()
+        self.row_buttons = []
+        for i, item in enumerate(self.items):
+            b = ctk.CTkButton(
+                self.list_frame, text=self._row_text(item), anchor="w",
+                fg_color="transparent", text_color=BADGE_COLOR[item.status],
+                hover_color="#333337",
+                command=lambda idx=i: self.on_row_click(idx))
+            b.pack(fill="x", pady=2)
+            self.row_buttons.append(b)
 
-    def _stop_progress(self, complete: bool):
-        if self._progress_job is not None:
-            self.root.after_cancel(self._progress_job)
-            self._progress_job = None
-        value = 100 if complete else 0
-        self.progress["value"] = value
-        self.percent_var.set(f"{value}%")
+    def _update_row(self, i):
+        item = self.items[i]
+        b = self.row_buttons[i]
+        fg = "#264f78" if i == self.selected else "transparent"
+        b.configure(text=self._row_text(item),
+                    text_color=BADGE_COLOR[item.status], fg_color=fg)
 
     # ---- acoes ----
 
     def on_select(self):
-        path = filedialog.askopenfilename(
-            title="Escolha um arquivo para converter", filetypes=FILE_TYPES
-        )
-        if not path:
+        paths = filedialog.askopenfilenames(
+            title="Escolha os arquivos para converter", filetypes=FILE_TYPES)
+        if not paths:
             return
-        self.source_path = path
-        self.path_var.set(os.path.basename(path))
-        self.convert_btn.config(state="normal")
-        self.save_btn.config(state="disabled")
-        self.status_var.set(f"Selecionado: {path}")
+        for p in paths:
+            self.items.append(FileItem(p))
+        self._rebuild_list()
+        self.count_var.set(f"{len(self.items)} arquivo(s)")
+        self.convert_btn.configure(state="normal")
+        self.status_var.set("Pronto para converter.")
+
+    def on_row_click(self, i):
+        prev = self.selected
+        self.selected = i
+        if prev is not None and prev < len(self.row_buttons):
+            self._update_row(prev)
+        self._update_row(i)
+        self._render_preview(self.items[i])
+
+    def _render_preview(self, item):
+        if item.status == "ok":
+            text = item.markdown or ""
+        elif item.status == "erro":
+            text = f"[erro]\n{item.error}"
+        else:
+            text = "Ainda não convertido."
+        self.preview.configure(state="normal")
+        self.preview.delete("1.0", "end")
+        self.preview.insert("1.0", text)
+        self.preview.configure(state="disabled")
 
     def on_convert(self):
-        if not self.source_path:
+        pending = [i for i, it in enumerate(self.items)
+                   if it.status in ("pendente", "erro")]
+        if not pending:
             return
-        # Desabilita UI e roda conversao em thread separada (nao trava a janela).
-        self.select_btn.config(state="disabled")
-        self.convert_btn.config(state="disabled")
-        self.save_btn.config(state="disabled")
+        self.convert_btn.configure(state="disabled")
         self.status_var.set("Convertendo…")
-        self._start_progress()
+        threading.Thread(target=self._convert_worker, args=(pending,),
+                         daemon=True).start()
 
-        path = self.source_path
-        threading.Thread(target=self._convert_worker, args=(path,), daemon=True).start()
+    def _convert_worker(self, indices):
+        # Sequencial: 1 erro nao para o lote. UI so e tocada via root.after.
+        for i in indices:
+            item = self.items[i]
+            self.root.after(0, self._set_status, i, "convertendo")
+            try:
+                markdown = self.md.convert(item.path).markdown
+                out = resolve_output_path(item.path)
+                with open(out, "w", encoding="utf-8") as f:
+                    f.write(markdown)
+                self.root.after(0, self._on_item_ok, i, markdown, out)
+            except Exception as e:  # noqa: BLE001 — falha de 1 nao derruba o lote
+                self.root.after(0, self._on_item_err, i, str(e))
+        self.root.after(0, self._on_batch_done)
 
-    def _convert_worker(self, path):
-        try:
-            markdown = self.md.convert(path).markdown
-            self.root.after(0, self._on_convert_ok, markdown)
-        except MarkItDownException as e:
-            self.root.after(0, self._on_convert_err, f"Falha na conversão:\n{e}")
-        except Exception as e:  # qualquer erro inesperado nao deve derrubar o app
-            self.root.after(0, self._on_convert_err, f"Erro inesperado:\n{e}")
+    def _set_status(self, i, status):
+        self.items[i].status = status
+        self._update_row(i)
 
-    def _on_convert_ok(self, markdown):
-        self.result_markdown = markdown
-        self.preview.delete("1.0", "end")
-        self.preview.insert("1.0", markdown)
-        self._stop_progress(complete=True)
-        self._restore_buttons()
-        self.save_btn.config(state="normal")
-        self.status_var.set("Conversão concluída. Revise e salve o .md.")
+    def _on_item_ok(self, i, markdown, out):
+        item = self.items[i]
+        item.status = "ok"
+        item.markdown = markdown
+        item.output_path = out
+        item.error = None
+        self._update_row(i)
+        if self.selected == i:
+            self._render_preview(item)
 
-    def _on_convert_err(self, message):
-        self._stop_progress(complete=False)
-        self._restore_buttons()
-        self.status_var.set("Erro na conversão.")
-        messagebox.showerror("Tomark", message)
+    def _on_item_err(self, i, message):
+        item = self.items[i]
+        item.status = "erro"
+        item.error = message
+        self._update_row(i)
+        if self.selected == i:
+            self._render_preview(item)
 
-    def _restore_buttons(self):
-        self.select_btn.config(state="normal")
-        self.convert_btn.config(state="normal")
-
-    def on_save(self):
-        if not self.result_markdown:
-            return
-        default_name = "saida.md"
-        if self.source_path:
-            base = os.path.splitext(os.path.basename(self.source_path))[0]
-            default_name = base + ".md"
-
-        out = filedialog.asksaveasfilename(
-            title="Salvar Markdown",
-            defaultextension=".md",
-            initialfile=default_name,
-            filetypes=[("Markdown", "*.md"), ("Todos os arquivos", "*.*")],
-        )
-        if not out:
-            return
-        try:
-            with open(out, "w", encoding="utf-8") as f:
-                f.write(self.result_markdown)
-            self.status_var.set(f"Salvo em: {out}")
-            messagebox.showinfo("Tomark", f"Arquivo salvo:\n{out}")
-        except OSError as e:
-            messagebox.showerror("Tomark", f"Não foi possível salvar:\n{e}")
+    def _on_batch_done(self):
+        ok = sum(1 for it in self.items if it.status == "ok")
+        err = sum(1 for it in self.items if it.status == "erro")
+        self.convert_btn.configure(state="normal")
+        msg = f"✓ {ok} convertido(s), salvos ao lado do original"
+        if err:
+            msg += f"  ·  ✕ {err} com erro"
+        self.status_var.set(msg)
 
 
 def _selftest(paths):
     """Conversao headless (sem janela) p/ validar o pipeline empacotado.
-    Uso: MarkItDownGUI.exe --selftest arquivo1 [arquivo2 ...]
+    Uso: Tomark.exe --selftest arquivo1 [arquivo2 ...]
     Grava <arquivo>.selftest.md ao lado de cada entrada."""
     md = MarkItDown()
     lines = []
@@ -296,7 +235,6 @@ def _selftest(paths):
             lines.append(f"ERRO {path}: {e}")
             rc = 1
     report = "\n".join(lines)
-    # stdout pode nao existir no modo --windowed; gravar log sempre.
     with open("selftest_report.txt", "w", encoding="utf-8") as f:
         f.write(report + "\n")
     try:
@@ -310,7 +248,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
         sys.exit(_selftest(sys.argv[2:]))
 
-    root = tk.Tk()
+    root = ctk.CTk()
     MarkItDownApp(root)
     root.mainloop()
 
