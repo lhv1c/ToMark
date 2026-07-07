@@ -15,6 +15,7 @@ if (-not (Test-Path $py)) {
     --icon app\icon.ico `
     --add-data "app\icon.ico;." `
     --collect-all magika `
+    --collect-all customtkinter `
     --collect-submodules markitdown `
     app\markitdown_gui.py
 
