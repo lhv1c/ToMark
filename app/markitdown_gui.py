@@ -74,14 +74,21 @@ class MarkItDownApp:
         # topo: selecionar + contador + converter
         top = ctk.CTkFrame(self.root, fg_color="transparent")
         top.pack(fill="x", padx=16, pady=(16, 8))
-        ctk.CTkButton(top, text="Selecionar arquivos…",
-                      command=self.on_select).pack(side="left")
+        # Secundario (ghost): a acao existe mas nao compete com o CTA.
+        ctk.CTkButton(
+            top, text="Selecionar arquivos…", command=self.on_select,
+            corner_radius=8, height=36, fg_color="transparent",
+            border_width=1, border_color="#3a3d41", text_color="#e6e6e6",
+            hover_color="#2a2d31").pack(side="left")
         self.count_var = tk.StringVar(value="nenhum arquivo")
         ctk.CTkLabel(top, textvariable=self.count_var,
                      text_color="#9a9a9a").pack(side="left", padx=12)
+        # Primario (CTA): unico botao preenchido, no accent do app.
         self.convert_btn = ctk.CTkButton(
-            top, text="Converter", fg_color="#2ea043", hover_color="#278739",
-            command=self.on_convert, state="disabled")
+            top, text="Converter", command=self.on_convert, state="disabled",
+            corner_radius=8, height=36, fg_color="#2b6cb0",
+            hover_color="#2c7bd0", text_color="#ffffff",
+            text_color_disabled="#7f8a99")
         self.convert_btn.pack(side="right")
 
         # meio: lista (esq) + preview (dir)
