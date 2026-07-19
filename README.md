@@ -23,7 +23,7 @@ TXT, JSON, XML, EPUB.
 
 ### Windows
 
-Requisitos: Python 3.10+.
+Requisitos: Python 3.11+ (numpy pinado em `requirements-build.txt` exige 3.11+).
 
 ```powershell
 # 1. Ambiente (uma vez)
@@ -58,7 +58,7 @@ chmod +x Tomark-x86_64.AppImage
 ./Tomark-x86_64.AppImage
 ```
 
-**Compilar do código:** requisitos Python 3.10+ e o Tk do sistema (o Python do
+**Compilar do código:** requisitos Python 3.11+ e o Tk do sistema (o Python do
 Linux não traz `tkinter`):
 
 ```bash

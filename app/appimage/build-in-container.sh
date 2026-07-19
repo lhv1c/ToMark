@@ -1,8 +1,8 @@
 #!/bin/bash
-# Roda DENTRO de um container python:3.10-buster (Debian 10, glibc 2.28) para
+# Roda DENTRO de um container python:3.11-buster (Debian 10, glibc 2.28) para
 # gerar um AppImage compativel com distros antigas (ex.: Linux Mint 20+).
 # Chamado pelo workflow .github/workflows/build-linux-appimage.yml via:
-#   docker run --rm -v "$PWD":/workspace -w /workspace python:3.10-buster bash app/appimage/build-in-container.sh
+#   docker run --rm -v "$PWD":/workspace -w /workspace python:3.11-buster bash app/appimage/build-in-container.sh
 set -euo pipefail
 
 # ponytail: buster saiu do mirror padrao (deb.debian.org, 404); so sobra em
