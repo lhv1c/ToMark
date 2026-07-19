@@ -12,12 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # roda em ubuntu:18.04 (glibc 2.27) via `docker run` -- nao usa
-      # `container:` no job pra nao quebrar as actions oficiais (elas
-      # exigem Node 20, que precisa de glibc mais novo que o bionic tem.
-      - name: Build AppImage (ubuntu:18.04 / glibc 2.27)
+      # roda em python:3.10-buster (Debian 10, glibc 2.28) via `docker run`
+      # -- nao usa `container:` no job pra nao quebrar as actions oficiais
+      # (exigem Node 20, que pede glibc mais novo do que o buster tem).
+      - name: Build AppImage (python:3.10-buster / glibc 2.28)
         run: |
-          docker run --rm -v "$PWD":/workspace -w /workspace ubuntu:18.04 \
+          docker run --rm -v "$PWD":/workspace -w /workspace python:3.10-buster \
             bash app/appimage/build-in-container.sh
 
       - uses: actions/upload-artifact@v4

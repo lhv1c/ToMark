@@ -1,31 +1,27 @@
 #!/bin/bash
-# Roda DENTRO de um container ubuntu:18.04 (glibc 2.27) para gerar um
-# AppImage compativel com distros antigas (ex.: Linux Mint 19).
+# Roda DENTRO de um container python:3.10-buster (Debian 10, glibc 2.28) para
+# gerar um AppImage compativel com distros antigas (ex.: Linux Mint 20+).
 # Chamado pelo workflow .github/workflows/build-linux-appimage.yml via:
-#   docker run --rm -v "$PWD":/workspace -w /workspace ubuntu:18.04 bash app/appimage/build-in-container.sh
+#   docker run --rm -v "$PWD":/workspace -w /workspace python:3.10-buster bash app/appimage/build-in-container.sh
 set -euo pipefail
 
-# ponytail: 18.04 e EOL, os espelhos padrao nao servem mais o repo bionic.
-sed -i \
-    -e 's|archive.ubuntu.com|old-releases.ubuntu.com|g' \
-    -e 's|security.ubuntu.com|old-releases.ubuntu.com|g' \
-    /etc/apt/sources.list
+# ponytail: buster saiu do mirror padrao (deb.debian.org, 404); so sobra em
+# archive.debian.org, que congela o Release do dia do EOL em diante -- sem
+# desligar o Check-Valid-Until o apt recusa o repo por "expirado".
+sed -i 's|deb.debian.org|archive.debian.org|g' /etc/apt/sources.list
+echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
-    software-properties-common curl ca-certificates file build-essential
+    build-essential curl ca-certificates file
 
-add-apt-repository -y ppa:deadsnakes/ppa
-apt-get update
-apt-get install -y --no-install-recommends \
-    python3.10 python3.10-venv python3.10-dev python3.10-tk
+python3 -c "import tkinter"  # falha cedo se a imagem nao tiver Tk embutido
 
-python3.10 -m venv /tmp/venv
-/tmp/venv/bin/pip install --upgrade pip
-/tmp/venv/bin/pip install -r app/requirements-build.txt
+python3 -m pip install --upgrade pip
+python3 -m pip install -r app/requirements-build.txt
 
-/tmp/venv/bin/python -m PyInstaller --noconfirm --clean --windowed --name Tomark \
+python3 -m PyInstaller --noconfirm --clean --windowed --name Tomark \
     --add-data "app/icon.png:." \
     --collect-all magika \
     --collect-all customtkinter \

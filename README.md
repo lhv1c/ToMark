@@ -49,8 +49,9 @@ Para rodar direto pelo Python, sem empacotar:
 
 **Pronto pra usar (AppImage):** baixe `Tomark-x86_64.AppImage` nos artifacts do
 workflow [`Build Linux AppImage`](../../actions/workflows/build-linux-appimage.yml)
-(ou na aba Releases, se publicado numa tag `v*`). É buildado em Ubuntu 18.04
-(glibc 2.27), então roda em distros antigas — Linux Mint 19 em diante.
+(ou na aba Releases, se publicado numa tag `v*`). É buildado em Debian 10
+"buster" (glibc 2.28), então roda em distros antigas — Linux Mint 20 em
+diante. (Mint 19.x tem glibc 2.27, uma versão abaixo — pode não rodar.)
 
 ```bash
 chmod +x Tomark-x86_64.AppImage
@@ -90,7 +91,7 @@ Sem empacotar:
 | `app/markitdown_gui.py` | Interface gráfica (tkinter, dark mode). |
 | `app/build.ps1` | Build do `.exe` no Windows (PyInstaller). |
 | `app/build.sh` | Build do binário no Linux (PyInstaller). |
-| `app/appimage/` | Empacotamento em AppImage, build em Ubuntu 18.04 (CI). |
+| `app/appimage/` | Empacotamento em AppImage, build em Debian 10 buster (CI). |
 | `app/make_icon.py` | Gera `app/icon.ico`. |
 | `packages/markitdown/` | Biblioteca de conversão (motor). |
 
