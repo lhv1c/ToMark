@@ -30,6 +30,9 @@ FILE_TYPES = [
     ("Todos os arquivos", "*.*"),
 ]
 
+# Consolas so existe no Windows; "monospace" e o alias generico no X11/Wayland.
+FONT_MONO = ("Consolas" if sys.platform == "win32" else "monospace", 12)
+
 BADGE = {"pendente": "•", "convertendo": "⟳", "ok": "✓", "erro": "✕"}
 BADGE_COLOR = {"pendente": "#9a9a9a", "convertendo": "#4cc2ff",
                "ok": "#4caf72", "erro": "#ff6b6b"}
@@ -62,7 +65,13 @@ class MarkItDownApp:
         root.geometry("900x640")
         root.minsize(680, 480)
         try:
-            root.iconbitmap(_resource_path("icon.ico"))
+            if sys.platform == "win32":
+                root.iconbitmap(_resource_path("icon.ico"))
+            else:
+                # Tk fora do Windows nao le .ico. A PhotoImage precisa
+                # continuar viva, senao o Tk descarta a imagem.
+                self._icon = tk.PhotoImage(file=_resource_path("icon.png"))
+                root.iconphoto(True, self._icon)
         except Exception:  # noqa: BLE001 — sem icone nao e fatal
             pass
 
@@ -99,7 +108,7 @@ class MarkItDownApp:
             mid, width=300, label_text="Arquivos")
         self.list_frame.pack(side="left", fill="y")
 
-        self.preview = ctk.CTkTextbox(mid, wrap="word", font=("Consolas", 12))
+        self.preview = ctk.CTkTextbox(mid, wrap="word", font=FONT_MONO)
         self.preview.pack(side="left", fill="both", expand=True, padx=(12, 0))
         self.preview.configure(state="disabled")
 

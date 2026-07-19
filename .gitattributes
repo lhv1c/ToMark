@@ -3,3 +3,7 @@ packages/markitdown-sample-plugin/tests/test_files/** linguist-vendored
 
 # Treat PDF files as binary to prevent line ending conversion
 *.pdf binary
+
+# Shell scripts precisam de LF: CRLF quebra o shebang no Linux.
+*.sh text eol=lf
+app/appimage/AppRun text eol=lf

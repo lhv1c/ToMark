@@ -1,0 +1,26 @@
+name: Build Linux AppImage
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # roda em ubuntu:18.04 (glibc 2.27) via `docker run` -- nao usa
+      # `container:` no job pra nao quebrar as actions oficiais (elas
+      # exigem Node 20, que precisa de glibc mais novo que o bionic tem.
+      - name: Build AppImage (ubuntu:18.04 / glibc 2.27)
+        run: |
+          docker run --rm -v "$PWD":/workspace -w /workspace ubuntu:18.04 \
+            bash app/appimage/build-in-container.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tomark-AppImage
+          path: dist-appimage/Tomark-x86_64.AppImage

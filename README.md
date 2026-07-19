@@ -1,6 +1,6 @@
 # Tomark
 
-App desktop (Windows) que converte arquivos para **Markdown** — sem terminal, sem linha de comando.
+App desktop (Windows e Linux) que converte arquivos para **Markdown** — sem terminal, sem linha de comando.
 
 Selecione um arquivo, clique **Converter**, veja a pré-visualização e salve o
 `.md`. Conversão 100% offline.
@@ -21,7 +21,9 @@ TXT, JSON, XML, EPUB.
 
 ## Compilar do código-fonte
 
-Requisitos: Windows + Python 3.10+.
+### Windows
+
+Requisitos: Python 3.10+.
 
 ```powershell
 # 1. Ambiente (uma vez)
@@ -43,12 +45,52 @@ Para rodar direto pelo Python, sem empacotar:
 .\.venv\Scripts\python.exe app\markitdown_gui.py
 ```
 
+### Linux
+
+**Pronto pra usar (AppImage):** baixe `Tomark-x86_64.AppImage` nos artifacts do
+workflow [`Build Linux AppImage`](../../actions/workflows/build-linux-appimage.yml)
+(ou na aba Releases, se publicado numa tag `v*`). É buildado em Ubuntu 18.04
+(glibc 2.27), então roda em distros antigas — Linux Mint 19 em diante.
+
+```bash
+chmod +x Tomark-x86_64.AppImage
+./Tomark-x86_64.AppImage
+```
+
+**Compilar do código:** requisitos Python 3.10+ e o Tk do sistema (o Python do
+Linux não traz `tkinter`):
+
+```bash
+sudo apt install python3-tk        # Debian/Ubuntu
+# sudo dnf install python3-tkinter # Fedora
+# sudo pacman -S tk                # Arch
+```
+
+```bash
+# 1. Ambiente (uma vez)
+python3 -m venv .venv
+./.venv/bin/python -m pip install "./packages/markitdown[pptx,docx,xlsx,xls,pdf]" pyinstaller
+
+# 2. Build
+./app/build.sh
+```
+
+Saída: `dist/Tomark/Tomark`.
+
+Sem empacotar:
+
+```bash
+./.venv/bin/python app/markitdown_gui.py
+```
+
 ## Estrutura
 
 | Caminho | O quê |
 |---------|-------|
 | `app/markitdown_gui.py` | Interface gráfica (tkinter, dark mode). |
-| `app/build.ps1` | Script de build do `.exe` (PyInstaller). |
+| `app/build.ps1` | Build do `.exe` no Windows (PyInstaller). |
+| `app/build.sh` | Build do binário no Linux (PyInstaller). |
+| `app/appimage/` | Empacotamento em AppImage, build em Ubuntu 18.04 (CI). |
 | `app/make_icon.py` | Gera `app/icon.ico`. |
 | `packages/markitdown/` | Biblioteca de conversão (motor). |
 

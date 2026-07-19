@@ -1,0 +1,5 @@
+#!/bin/bash
+# Entrypoint do AppImage: executa o binario PyInstaller (onedir) empacotado.
+set -e
+HERE="$(dirname "$(readlink -f "${0}")")"
+exec "$HERE/usr/bin/Tomark/Tomark" "$@"

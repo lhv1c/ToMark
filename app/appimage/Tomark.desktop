@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Tomark
+Comment=Conversor de arquivos para Markdown
+Exec=Tomark %F
+Icon=tomark
+Categories=Office;Utility;
+Terminal=false

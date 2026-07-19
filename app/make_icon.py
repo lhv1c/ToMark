@@ -1,6 +1,7 @@
 """
-Gera app/icon.ico — ícone do MarkItDown GUI (badge Markdown "M v" na paleta dark).
-Desenha em alta resolucao (supersampling) e salva .ico multi-tamanho.
+Gera app/icon.ico (Windows) e app/icon.png (Linux) — ícone do MarkItDown GUI
+(badge Markdown "M v" na paleta dark).
+Desenha em alta resolucao (supersampling) e salva .ico multi-tamanho + .png 256.
 
 Uso:  ..\.venv\Scripts\python.exe app\make_icon.py
 """
@@ -54,11 +55,17 @@ def build():
 
     # Downscale suave para 256 e salva multi-tamanho.
     base = img.resize((256, 256), Image.LANCZOS)
-    out = os.path.join(os.path.dirname(__file__), "icon.ico")
+    here = os.path.dirname(__file__)
+    out = os.path.join(here, "icon.ico")
     base.save(out, format="ICO",
               sizes=[(16, 16), (24, 24), (32, 32), (48, 48),
                      (64, 64), (128, 128), (256, 256)])
     print(f"Gravado: {out}")
+
+    # Tk no Linux nao le .ico; iconphoto precisa de PNG.
+    out_png = os.path.join(here, "icon.png")
+    base.save(out_png, format="PNG")
+    print(f"Gravado: {out_png}")
 
 
 if __name__ == "__main__":
