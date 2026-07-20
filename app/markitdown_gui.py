@@ -6,6 +6,7 @@ Selecione varios arquivos, converta, e cada .md e salvo ao lado do original.
 """
 
 import os
+import subprocess
 import sys
 import threading
 import tkinter as tk
@@ -15,7 +16,13 @@ import customtkinter as ctk
 
 from markitdown import MarkItDown
 
-from paths import resolve_output_path
+from paths import next_selection, resolve_output_path
+
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+except ImportError:  # ponytail: DnD e opcional — sem ela so perde o arrastar
+    DND_FILES = None
+    TkinterDnD = None
 
 
 FILE_TYPES = [
@@ -33,15 +40,58 @@ FILE_TYPES = [
 # Consolas so existe no Windows; "monospace" e o alias generico no X11/Wayland.
 FONT_MONO = ("Consolas" if sys.platform == "win32" else "monospace", 12)
 
+# Cores como (claro, escuro): o CTk troca sozinho no appearance_mode.
+MUTED = ("#6b6b6b", "#9a9a9a")
+HINT = ("#8a8a8a", "#6f6f6f")
+ROW_SEL = ("#cfe3f7", "#264f78")
+ROW_HOVER = ("#e6e6e6", "#333337")
+GHOST_BORDER = ("#c8ccd0", "#3a3d41")
+GHOST_TEXT = ("#1f1f1f", "#e6e6e6")
+GHOST_HOVER = ("#ececec", "#2a2d31")
+DISABLED = ("#a8adb2", "#5a5d61")
+
 BADGE = {"pendente": "•", "convertendo": "⟳", "ok": "✓", "erro": "✕"}
-BADGE_COLOR = {"pendente": "#9a9a9a", "convertendo": "#4cc2ff",
-               "ok": "#4caf72", "erro": "#ff6b6b"}
+BADGE_COLOR = {"pendente": MUTED, "convertendo": ("#0a7ec2", "#4cc2ff"),
+               "ok": ("#2e8b57", "#4caf72"), "erro": ("#c62828", "#ff6b6b")}
+
+COPY_GLYPH = "⧉"      # dois quadrados sobrepostos: copiar
+COPIED_GLYPH = "✓"
+
+EMPTY_HINT = ("Arraste arquivos aqui\n"
+              "ou clique em “Selecionar arquivos…”")
 
 
 def _resource_path(name):
     """Caminho de um recurso, funcionando no fonte e no exe (PyInstaller)."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, name)
+
+
+def reveal_in_file_manager(path):
+    """Abre a pasta que contem `path` no gerenciador de arquivos do sistema."""
+    folder = os.path.dirname(os.path.abspath(path))
+    if sys.platform == "win32":
+        os.startfile(folder)  # noqa: S606 — caminho vem do proprio app
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", folder])
+    else:
+        subprocess.Popen(["xdg-open", folder])
+
+
+def make_root():
+    """CTk com drag & drop quando tkinterdnd2 (e a lib tkdnd) estao presentes."""
+    if TkinterDnD is None:
+        return ctk.CTk()
+
+    class _DnDCTk(ctk.CTk, TkinterDnD.DnDWrapper):
+        def __init__(self):
+            super().__init__()
+            self.TkdndVersion = TkinterDnD._require(self)
+
+    try:
+        return _DnDCTk()
+    except Exception:  # noqa: BLE001 — tkdnd ausente: segue sem arrastar
+        return ctk.CTk()
 
 
 class FileItem:
@@ -60,6 +110,9 @@ class MarkItDownApp:
         self.items = []                 # list[FileItem]
         self.row_buttons = []           # botao por item (mesma ordem de items)
         self.selected = None            # indice do item selecionado
+        self.done = 0                   # itens finalizados no lote atual
+        self.total = 0                  # tamanho do lote atual (0 = parado)
+        self.cancel = threading.Event()  # pedido de parada do lote
 
         root.title("Tomark — Conversor para Markdown")
         root.geometry("900x640")
@@ -75,30 +128,37 @@ class MarkItDownApp:
         except Exception:  # noqa: BLE001 — sem icone nao e fatal
             pass
 
-        ctk.set_appearance_mode("dark")
+        ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("dark-blue")
         self._build_ui()
+        self._bind_shortcuts()
+        self._setup_dnd()
+        self._rebuild_list()
+        self._refresh_actions()
 
     def _build_ui(self):
-        # topo: selecionar + contador + converter
+        # topo: selecionar + limpar + contador + converter
         top = ctk.CTkFrame(self.root, fg_color="transparent")
         top.pack(fill="x", padx=16, pady=(16, 8))
         # Secundario (ghost): a acao existe mas nao compete com o CTA.
-        ctk.CTkButton(
-            top, text="Selecionar arquivos…", command=self.on_select,
-            corner_radius=8, height=36, fg_color="transparent",
-            border_width=1, border_color="#3a3d41", text_color="#e6e6e6",
-            hover_color="#2a2d31").pack(side="left")
+        self._ghost_button(top, "Selecionar arquivos…",
+                           self.on_select).pack(side="left")
+        self.clear_btn = self._ghost_button(top, "Limpar", self.on_clear)
+        self.clear_btn.pack(side="left", padx=(8, 0))
         self.count_var = tk.StringVar(value="nenhum arquivo")
         ctk.CTkLabel(top, textvariable=self.count_var,
-                     text_color="#9a9a9a").pack(side="left", padx=12)
+                     text_color=MUTED).pack(side="left", padx=12)
         # Primario (CTA): unico botao preenchido, no accent do app.
         self.convert_btn = ctk.CTkButton(
             top, text="Converter", command=self.on_convert, state="disabled",
             corner_radius=8, height=36, fg_color="#2b6cb0",
             hover_color="#2c7bd0", text_color="#ffffff",
-            text_color_disabled="#7f8a99")
+            text_color_disabled=DISABLED)
         self.convert_btn.pack(side="right")
+        self.theme_btn = self._ghost_button(top, "", self.on_toggle_theme)
+        self.theme_btn.configure(width=40)
+        self.theme_btn.pack(side="right", padx=(0, 8))
+        self._sync_theme_btn()
 
         # meio: lista (esq) + preview (dir)
         mid = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -107,15 +167,60 @@ class MarkItDownApp:
         self.list_frame = ctk.CTkScrollableFrame(
             mid, width=300, label_text="Arquivos")
         self.list_frame.pack(side="left", fill="y")
+        self.empty_label = ctk.CTkLabel(
+            self.list_frame, text=EMPTY_HINT, text_color=HINT,
+            justify="center")
 
         self.preview = ctk.CTkTextbox(mid, wrap="word", font=FONT_MONO)
         self.preview.pack(side="left", fill="both", expand=True, padx=(12, 0))
         self.preview.configure(state="disabled")
+        # Copiar como icone sobreposto no canto do preview, no lugar de mais
+        # um botao no rodape. Fica escondido enquanto nao ha o que copiar.
+        self.copy_btn = ctk.CTkButton(
+            self.preview, text=COPY_GLYPH, width=28, height=28,
+            corner_radius=6, font=("Segoe UI Symbol", 14),
+            fg_color=GHOST_HOVER, hover_color=ROW_HOVER,
+            text_color=GHOST_TEXT, command=self.on_copy)
 
-        # rodape: status resumo
+        # rodape: status + abrir pasta. A barra de progresso entra acima
+        # do rodape so enquanto o lote roda (pack before=self.footer).
+        self.footer = ctk.CTkFrame(self.root, fg_color="transparent")
+        self.footer.pack(fill="x", side="bottom", padx=16, pady=(0, 12))
         self.status_var = tk.StringVar(value="Pronto.")
-        ctk.CTkLabel(self.root, textvariable=self.status_var, anchor="w",
-                     text_color="#9a9a9a").pack(fill="x", padx=16, pady=(0, 12))
+        ctk.CTkLabel(self.footer, textvariable=self.status_var, anchor="w",
+                     text_color=MUTED).pack(side="left")
+        self.open_btn = self._ghost_button(self.footer, "Abrir pasta",
+                                           self.on_open_folder, height=28)
+        self.open_btn.pack(side="right")
+
+        self.progress = ctk.CTkProgressBar(self.root, height=6)
+        self.progress.set(0)
+
+    def _ghost_button(self, parent, text, command, height=36):
+        return ctk.CTkButton(
+            parent, text=text, command=command, corner_radius=8, height=height,
+            fg_color="transparent", border_width=1, border_color=GHOST_BORDER,
+            text_color=GHOST_TEXT, hover_color=GHOST_HOVER,
+            text_color_disabled=DISABLED)
+
+    def _bind_shortcuts(self):
+        self.root.bind("<Control-o>", lambda e: self.on_select())
+        self.root.bind("<Control-Return>", lambda e: self.on_convert())
+        self.root.bind("<Delete>", lambda e: self.on_remove())
+        self.root.bind("<Control-l>", lambda e: self.on_clear())
+        self.root.bind("<Escape>", lambda e: self.on_cancel())
+
+    def _setup_dnd(self):
+        if DND_FILES is None or not hasattr(self.root, "drop_target_register"):
+            return
+        self.root.drop_target_register(DND_FILES)
+        self.root.dnd_bind("<<Drop>>", self._on_drop)
+
+    def _on_drop(self, event):
+        # splitlist entende o formato do tkdnd: caminho com espaco vem em {}.
+        paths = [p for p in self.root.tk.splitlist(event.data)
+                 if os.path.isfile(p)]
+        self._add_paths(paths)
 
     # ---- fila ----
 
@@ -129,32 +234,123 @@ class MarkItDownApp:
         for i, item in enumerate(self.items):
             b = ctk.CTkButton(
                 self.list_frame, text=self._row_text(item), anchor="w",
-                fg_color="transparent", text_color=BADGE_COLOR[item.status],
-                hover_color="#333337",
+                fg_color=ROW_SEL if i == self.selected else "transparent",
+                text_color=BADGE_COLOR[item.status], hover_color=ROW_HOVER,
                 command=lambda idx=i: self.on_row_click(idx))
             b.pack(fill="x", pady=2)
             self.row_buttons.append(b)
+        if self.items:
+            self.empty_label.pack_forget()
+        else:
+            self.empty_label.pack(pady=24)
 
     def _update_row(self, i):
         item = self.items[i]
         b = self.row_buttons[i]
-        fg = "#264f78" if i == self.selected else "transparent"
+        fg = ROW_SEL if i == self.selected else "transparent"
         b.configure(text=self._row_text(item),
                     text_color=BADGE_COLOR[item.status], fg_color=fg)
+
+    def _refresh_actions(self):
+        """Contador e estado dos botoes — fonte unica da verdade da barra."""
+        n = len(self.items)
+        self.count_var.set(f"{n} arquivo(s)" if n else "nenhum arquivo")
+        running = self.total > 0
+        pending = any(it.status in ("pendente", "erro") for it in self.items)
+        if running:
+            # Mesmo botao: durante o lote a acao util e parar, nao converter.
+            self.convert_btn.configure(
+                text="Cancelar", command=self.on_cancel,
+                state="disabled" if self.cancel.is_set() else "normal")
+        else:
+            self.convert_btn.configure(
+                text="Converter", command=self.on_convert,
+                state="normal" if pending else "disabled")
+        self.clear_btn.configure(
+            state="normal" if n and not running else "disabled")
+        sel = self.items[self.selected] if self.selected is not None else None
+        done = bool(sel and sel.status == "ok")
+        self.open_btn.configure(state="normal" if done else "disabled")
+        if done:
+            self.copy_btn.configure(text=COPY_GLYPH)
+            # canto superior direito, deslocado pra nao cobrir a barra de rolagem
+            self.copy_btn.place(relx=1.0, y=8, x=-38, anchor="ne")
+        else:
+            self.copy_btn.place_forget()
+
+    def _add_paths(self, paths):
+        if not paths:
+            return
+        for p in paths:
+            self.items.append(FileItem(p))
+        self._rebuild_list()
+        self._refresh_actions()
+        self.status_var.set("Pronto para converter.")
 
     # ---- acoes ----
 
     def on_select(self):
         paths = filedialog.askopenfilenames(
             title="Escolha os arquivos para converter", filetypes=FILE_TYPES)
-        if not paths:
+        self._add_paths(list(paths))
+
+    def on_remove(self):
+        if self.selected is None or self.total:
             return
-        for p in paths:
-            self.items.append(FileItem(p))
+        i = self.selected
+        self.selected = next_selection(len(self.items), i)
+        del self.items[i]
         self._rebuild_list()
-        self.count_var.set(f"{len(self.items)} arquivo(s)")
-        self.convert_btn.configure(state="normal")
-        self.status_var.set("Pronto para converter.")
+        self._refresh_actions()
+        self._render_preview(
+            self.items[self.selected] if self.selected is not None else None)
+
+    def on_clear(self):
+        if self.total:
+            return
+        self.items = []
+        self.selected = None
+        self._rebuild_list()
+        self._refresh_actions()
+        self._render_preview(None)
+        self.status_var.set("Pronto.")
+
+    def _sync_theme_btn(self):
+        dark = ctk.get_appearance_mode() == "Dark"
+        self.theme_btn.configure(text="☀" if dark else "☾")
+
+    def on_toggle_theme(self):
+        ctk.set_appearance_mode(
+            "light" if ctk.get_appearance_mode() == "Dark" else "dark")
+        self._sync_theme_btn()
+
+    def on_copy(self):
+        if self.selected is None:
+            return
+        item = self.items[self.selected]
+        if item.status != "ok":
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(item.markdown or "")
+        self.copy_btn.configure(text=COPIED_GLYPH)
+        self.root.after(1200, lambda: self.copy_btn.configure(text=COPY_GLYPH))
+        self.status_var.set("Markdown copiado.")
+
+    def on_cancel(self):
+        if not self.total:
+            return
+        self.cancel.set()
+        self.status_var.set("Cancelando… (termina o arquivo atual)")
+        self._refresh_actions()
+
+    def on_open_folder(self):
+        if self.selected is None:
+            return
+        item = self.items[self.selected]
+        try:
+            reveal_in_file_manager(item.output_path or item.path)
+        except Exception as e:  # noqa: BLE001 — sem gerenciador de arquivos
+            self.status_var.set(f"Nao foi possivel abrir a pasta: {e}")
 
     def on_row_click(self, i):
         prev = self.selected
@@ -163,9 +359,12 @@ class MarkItDownApp:
             self._update_row(prev)
         self._update_row(i)
         self._render_preview(self.items[i])
+        self._refresh_actions()
 
     def _render_preview(self, item):
-        if item.status == "ok":
+        if item is None:
+            text = ""
+        elif item.status == "ok":
             text = item.markdown or ""
         elif item.status == "erro":
             text = f"[erro]\n{item.error}"
@@ -177,18 +376,26 @@ class MarkItDownApp:
         self.preview.configure(state="disabled")
 
     def on_convert(self):
+        if self.total:
+            return
         pending = [i for i, it in enumerate(self.items)
                    if it.status in ("pendente", "erro")]
         if not pending:
             return
-        self.convert_btn.configure(state="disabled")
-        self.status_var.set("Convertendo…")
+        self.done, self.total = 0, len(pending)
+        self.cancel.clear()
+        self._refresh_actions()
+        self.progress.set(0)
+        self.progress.pack(fill="x", padx=16, pady=(0, 8), before=self.footer)
+        self.status_var.set(f"Convertendo…  0/{self.total}")
         threading.Thread(target=self._convert_worker, args=(pending,),
                          daemon=True).start()
 
     def _convert_worker(self, indices):
         # Sequencial: 1 erro nao para o lote. UI so e tocada via root.after.
         for i in indices:
+            if self.cancel.is_set():
+                break
             item = self.items[i]
             self.root.after(0, self._set_status, i, "convertendo")
             try:
@@ -205,6 +412,11 @@ class MarkItDownApp:
         self.items[i].status = status
         self._update_row(i)
 
+    def _tick(self):
+        self.done += 1
+        self.progress.set(self.done / self.total if self.total else 0)
+        self.status_var.set(f"Convertendo…  {self.done}/{self.total}")
+
     def _on_item_ok(self, i, markdown, out):
         item = self.items[i]
         item.status = "ok"
@@ -212,22 +424,30 @@ class MarkItDownApp:
         item.output_path = out
         item.error = None
         self._update_row(i)
+        self._tick()
         if self.selected == i:
             self._render_preview(item)
+            self.open_btn.configure(state="normal")
 
     def _on_item_err(self, i, message):
         item = self.items[i]
         item.status = "erro"
         item.error = message
         self._update_row(i)
+        self._tick()
         if self.selected == i:
             self._render_preview(item)
 
     def _on_batch_done(self):
         ok = sum(1 for it in self.items if it.status == "ok")
         err = sum(1 for it in self.items if it.status == "erro")
-        self.convert_btn.configure(state="normal")
-        msg = f"✓ {ok} convertido(s), salvos ao lado do original"
+        cancelled = self.cancel.is_set()
+        self.cancel.clear()
+        self.done = self.total = 0
+        self.progress.pack_forget()
+        self._refresh_actions()
+        msg = ("⊘ cancelado — " if cancelled else "")
+        msg += f"✓ {ok} convertido(s), salvos ao lado do original"
         if err:
             msg += f"  ·  ✕ {err} com erro"
         self.status_var.set(msg)
@@ -264,7 +484,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
         sys.exit(_selftest(sys.argv[2:]))
 
-    root = ctk.CTk()
+    root = make_root()
     MarkItDownApp(root)
     root.mainloop()
 

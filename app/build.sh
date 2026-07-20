@@ -14,6 +14,7 @@ PY=./.venv/bin/python
     --add-data "app/icon.png:." \
     --collect-all magika \
     --collect-all customtkinter \
+    --collect-all tkinterdnd2 \
     --collect-submodules markitdown \
     app/markitdown_gui.py
 
