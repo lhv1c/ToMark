@@ -41,8 +41,10 @@ FILE_TYPES = [
 FONT_MONO = ("Consolas" if sys.platform == "win32" else "monospace", 12)
 
 # Cores como (claro, escuro): o CTk troca sozinho no appearance_mode.
+# Todo token e par — cor em string unica nao responde ao tema (DESIGN.md,
+# The Paired Token Rule). Contrastes medidos contra o fundo real do widget.
 MUTED = ("#6b6b6b", "#9a9a9a")
-HINT = ("#8a8a8a", "#6f6f6f")
+HINT = ("#666666", "#888888")        # 4.6:1 / 4.5:1 sobre o painel da fila
 ROW_SEL = ("#cfe3f7", "#264f78")
 ROW_HOVER = ("#e6e6e6", "#333337")
 GHOST_BORDER = ("#c8ccd0", "#3a3d41")
@@ -50,9 +52,19 @@ GHOST_TEXT = ("#1f1f1f", "#e6e6e6")
 GHOST_HOVER = ("#ececec", "#2a2d31")
 DISABLED = ("#a8adb2", "#5a5d61")
 
+# Acento unico do app (DESIGN.md, The Single Accent Rule): CTA e progresso
+# usam o mesmo azul, nao o do tema. Hover ESCURECE — clarear derrubava o
+# texto branco pra 4.33:1, abaixo de AA.
+ACTION = ("#2b6cb0", "#1f538d")        # branco por cima: 5.4:1 / 7.8:1
+ACTION_HOVER = ("#1f538d", "#164070")  # 7.8:1 / 10.6:1
+
 BADGE = {"pendente": "•", "convertendo": "⟳", "ok": "✓", "erro": "✕"}
-BADGE_COLOR = {"pendente": MUTED, "convertendo": ("#0a7ec2", "#4cc2ff"),
-               "ok": ("#2e8b57", "#4caf72"), "erro": ("#c62828", "#ff6b6b")}
+# Cor do badge, nunca do nome do arquivo (DESIGN.md, The Earned Color Rule).
+# Cada par passa 4.5:1 sobre o painel E sobre a linha selecionada.
+BADGE_COLOR = {"pendente": ("#5f5f5f", "#bdbdbd"),
+               "convertendo": ("#0868a0", "#5ec8ff"),
+               "ok": ("#257046", "#89cca2"),
+               "erro": ("#be2626", "#ffa6a6")}
 
 COPY_GLYPH = "⧉"      # dois quadrados sobrepostos: copiar
 COPIED_GLYPH = "✓"
@@ -108,7 +120,7 @@ class MarkItDownApp:
         self.root = root
         self.md = MarkItDown()          # plugins off; conversores embutidos
         self.items = []                 # list[FileItem]
-        self.row_buttons = []           # botao por item (mesma ordem de items)
+        self.row_widgets = []           # (row, badge, name) por item
         self.selected = None            # indice do item selecionado
         self.done = 0                   # itens finalizados no lote atual
         self.total = 0                  # tamanho do lote atual (0 = parado)
@@ -151,8 +163,8 @@ class MarkItDownApp:
         # Primario (CTA): unico botao preenchido, no accent do app.
         self.convert_btn = ctk.CTkButton(
             top, text="Converter", command=self.on_convert, state="disabled",
-            corner_radius=8, height=36, fg_color="#2b6cb0",
-            hover_color="#2c7bd0", text_color="#ffffff",
+            corner_radius=8, height=36, fg_color=ACTION,
+            hover_color=ACTION_HOVER, text_color="#ffffff",
             text_color_disabled=DISABLED)
         self.convert_btn.pack(side="right")
         self.theme_btn = self._ghost_button(top, "", self.on_toggle_theme)
@@ -193,7 +205,8 @@ class MarkItDownApp:
                                            self.on_open_folder, height=28)
         self.open_btn.pack(side="right")
 
-        self.progress = ctk.CTkProgressBar(self.root, height=6)
+        self.progress = ctk.CTkProgressBar(self.root, height=6,
+                                           progress_color=ACTION)
         self.progress.set(0)
 
     def _ghost_button(self, parent, text, command, height=36):
@@ -224,21 +237,45 @@ class MarkItDownApp:
 
     # ---- fila ----
 
-    def _row_text(self, item):
-        return f"{BADGE[item.status]}  {os.path.basename(item.path)}"
+    def _row_bg(self, i, hover=False):
+        if i == self.selected:
+            return ROW_SEL
+        return ROW_HOVER if hover else "transparent"
+
+    def _make_row(self, i, item):
+        """Badge e nome sao widgets separados de proposito: o estado colore o
+        badge, o nome fica sempre em GHOST_TEXT. Um CTkButton so tem um
+        text_color, e pintar a linha inteira derrubava o nome do arquivo
+        pra 3.0-3.5:1 (DESIGN.md, The Earned Color Rule)."""
+        row = ctk.CTkFrame(self.list_frame, corner_radius=8,
+                           fg_color=self._row_bg(i))
+        badge = ctk.CTkLabel(row, text=BADGE[item.status], width=16,
+                             text_color=BADGE_COLOR[item.status])
+        badge.pack(side="left", padx=(8, 0), pady=4)
+        name = ctk.CTkLabel(row, text=os.path.basename(item.path), anchor="w",
+                            text_color=GHOST_TEXT)
+        name.pack(side="left", fill="x", expand=True, padx=(4, 8), pady=4)
+        # ponytail: Enter/Leave em cada filho porque o Tk dispara Leave no pai
+        # ao entrar num filho. Os dois eventos caem no mesmo ciclo, entao nao
+        # pisca; se piscar, trocar por winfo_containing no Leave.
+        for w in (row, badge, name):
+            w.bind("<Button-1>", lambda e, idx=i: self.on_row_click(idx))
+            w.bind("<Enter>", lambda e, idx=i: self._set_row_bg(idx, True))
+            w.bind("<Leave>", lambda e, idx=i: self._set_row_bg(idx, False))
+        return row, badge, name
+
+    def _set_row_bg(self, i, hover):
+        if i < len(self.row_widgets):
+            self.row_widgets[i][0].configure(fg_color=self._row_bg(i, hover))
 
     def _rebuild_list(self):
-        for b in self.row_buttons:
-            b.destroy()
-        self.row_buttons = []
+        for row, _, _ in self.row_widgets:
+            row.destroy()
+        self.row_widgets = []
         for i, item in enumerate(self.items):
-            b = ctk.CTkButton(
-                self.list_frame, text=self._row_text(item), anchor="w",
-                fg_color=ROW_SEL if i == self.selected else "transparent",
-                text_color=BADGE_COLOR[item.status], hover_color=ROW_HOVER,
-                command=lambda idx=i: self.on_row_click(idx))
-            b.pack(fill="x", pady=2)
-            self.row_buttons.append(b)
+            widgets = self._make_row(i, item)
+            widgets[0].pack(fill="x", pady=2)
+            self.row_widgets.append(widgets)
         if self.items:
             self.empty_label.pack_forget()
         else:
@@ -246,10 +283,10 @@ class MarkItDownApp:
 
     def _update_row(self, i):
         item = self.items[i]
-        b = self.row_buttons[i]
-        fg = ROW_SEL if i == self.selected else "transparent"
-        b.configure(text=self._row_text(item),
-                    text_color=BADGE_COLOR[item.status], fg_color=fg)
+        row, badge, _ = self.row_widgets[i]
+        badge.configure(text=BADGE[item.status],
+                        text_color=BADGE_COLOR[item.status])
+        row.configure(fg_color=self._row_bg(i))
 
     def _refresh_actions(self):
         """Contador e estado dos botoes — fonte unica da verdade da barra."""
@@ -355,7 +392,7 @@ class MarkItDownApp:
     def on_row_click(self, i):
         prev = self.selected
         self.selected = i
-        if prev is not None and prev < len(self.row_buttons):
+        if prev is not None and prev < len(self.row_widgets):
             self._update_row(prev)
         self._update_row(i)
         self._render_preview(self.items[i])
