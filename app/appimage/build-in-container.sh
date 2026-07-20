@@ -42,6 +42,8 @@ chmod +x /tmp/appimagetool
 
 mkdir -p dist-appimage
 # --appimage-extract-and-run: containers geralmente nao tem /dev/fuse.
-/tmp/appimagetool --appimage-extract-and-run AppDir dist-appimage/Tomark-x86_64.AppImage
+# ARCH: o AppDir tem binarios de mais de uma arquitetura (libs do PyInstaller),
+# entao o appimagetool nao consegue adivinhar e exige a variavel.
+ARCH=x86_64 /tmp/appimagetool --appimage-extract-and-run AppDir dist-appimage/Tomark-x86_64.AppImage
 
 echo "AppImage gerado: dist-appimage/Tomark-x86_64.AppImage"
