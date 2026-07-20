@@ -40,9 +40,22 @@ FILE_TYPES = [
 # Consolas so existe no Windows; "monospace" e o alias generico no X11/Wayland.
 FONT_MONO = ("Consolas" if sys.platform == "win32" else "monospace", 12)
 
+# Cores como (claro, escuro): o CTk troca sozinho no appearance_mode.
+MUTED = ("#6b6b6b", "#9a9a9a")
+HINT = ("#8a8a8a", "#6f6f6f")
+ROW_SEL = ("#cfe3f7", "#264f78")
+ROW_HOVER = ("#e6e6e6", "#333337")
+GHOST_BORDER = ("#c8ccd0", "#3a3d41")
+GHOST_TEXT = ("#1f1f1f", "#e6e6e6")
+GHOST_HOVER = ("#ececec", "#2a2d31")
+DISABLED = ("#a8adb2", "#5a5d61")
+
 BADGE = {"pendente": "•", "convertendo": "⟳", "ok": "✓", "erro": "✕"}
-BADGE_COLOR = {"pendente": "#9a9a9a", "convertendo": "#4cc2ff",
-               "ok": "#4caf72", "erro": "#ff6b6b"}
+BADGE_COLOR = {"pendente": MUTED, "convertendo": ("#0a7ec2", "#4cc2ff"),
+               "ok": ("#2e8b57", "#4caf72"), "erro": ("#c62828", "#ff6b6b")}
+
+COPY_GLYPH = "⧉"      # dois quadrados sobrepostos: copiar
+COPIED_GLYPH = "✓"
 
 EMPTY_HINT = ("Arraste arquivos aqui\n"
               "ou clique em “Selecionar arquivos…”")
@@ -99,6 +112,7 @@ class MarkItDownApp:
         self.selected = None            # indice do item selecionado
         self.done = 0                   # itens finalizados no lote atual
         self.total = 0                  # tamanho do lote atual (0 = parado)
+        self.cancel = threading.Event()  # pedido de parada do lote
 
         root.title("Tomark — Conversor para Markdown")
         root.geometry("900x640")
@@ -114,7 +128,7 @@ class MarkItDownApp:
         except Exception:  # noqa: BLE001 — sem icone nao e fatal
             pass
 
-        ctk.set_appearance_mode("dark")
+        ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("dark-blue")
         self._build_ui()
         self._bind_shortcuts()
@@ -133,14 +147,18 @@ class MarkItDownApp:
         self.clear_btn.pack(side="left", padx=(8, 0))
         self.count_var = tk.StringVar(value="nenhum arquivo")
         ctk.CTkLabel(top, textvariable=self.count_var,
-                     text_color="#9a9a9a").pack(side="left", padx=12)
+                     text_color=MUTED).pack(side="left", padx=12)
         # Primario (CTA): unico botao preenchido, no accent do app.
         self.convert_btn = ctk.CTkButton(
             top, text="Converter", command=self.on_convert, state="disabled",
             corner_radius=8, height=36, fg_color="#2b6cb0",
             hover_color="#2c7bd0", text_color="#ffffff",
-            text_color_disabled="#7f8a99")
+            text_color_disabled=DISABLED)
         self.convert_btn.pack(side="right")
+        self.theme_btn = self._ghost_button(top, "", self.on_toggle_theme)
+        self.theme_btn.configure(width=40)
+        self.theme_btn.pack(side="right", padx=(0, 8))
+        self._sync_theme_btn()
 
         # meio: lista (esq) + preview (dir)
         mid = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -150,12 +168,19 @@ class MarkItDownApp:
             mid, width=300, label_text="Arquivos")
         self.list_frame.pack(side="left", fill="y")
         self.empty_label = ctk.CTkLabel(
-            self.list_frame, text=EMPTY_HINT, text_color="#6f6f6f",
+            self.list_frame, text=EMPTY_HINT, text_color=HINT,
             justify="center")
 
         self.preview = ctk.CTkTextbox(mid, wrap="word", font=FONT_MONO)
         self.preview.pack(side="left", fill="both", expand=True, padx=(12, 0))
         self.preview.configure(state="disabled")
+        # Copiar como icone sobreposto no canto do preview, no lugar de mais
+        # um botao no rodape. Fica escondido enquanto nao ha o que copiar.
+        self.copy_btn = ctk.CTkButton(
+            self.preview, text=COPY_GLYPH, width=28, height=28,
+            corner_radius=6, font=("Segoe UI Symbol", 14),
+            fg_color=GHOST_HOVER, hover_color=ROW_HOVER,
+            text_color=GHOST_TEXT, command=self.on_copy)
 
         # rodape: status + abrir pasta. A barra de progresso entra acima
         # do rodape so enquanto o lote roda (pack before=self.footer).
@@ -163,7 +188,7 @@ class MarkItDownApp:
         self.footer.pack(fill="x", side="bottom", padx=16, pady=(0, 12))
         self.status_var = tk.StringVar(value="Pronto.")
         ctk.CTkLabel(self.footer, textvariable=self.status_var, anchor="w",
-                     text_color="#9a9a9a").pack(side="left")
+                     text_color=MUTED).pack(side="left")
         self.open_btn = self._ghost_button(self.footer, "Abrir pasta",
                                            self.on_open_folder, height=28)
         self.open_btn.pack(side="right")
@@ -174,15 +199,16 @@ class MarkItDownApp:
     def _ghost_button(self, parent, text, command, height=36):
         return ctk.CTkButton(
             parent, text=text, command=command, corner_radius=8, height=height,
-            fg_color="transparent", border_width=1, border_color="#3a3d41",
-            text_color="#e6e6e6", hover_color="#2a2d31",
-            text_color_disabled="#5a5d61")
+            fg_color="transparent", border_width=1, border_color=GHOST_BORDER,
+            text_color=GHOST_TEXT, hover_color=GHOST_HOVER,
+            text_color_disabled=DISABLED)
 
     def _bind_shortcuts(self):
         self.root.bind("<Control-o>", lambda e: self.on_select())
         self.root.bind("<Control-Return>", lambda e: self.on_convert())
         self.root.bind("<Delete>", lambda e: self.on_remove())
         self.root.bind("<Control-l>", lambda e: self.on_clear())
+        self.root.bind("<Escape>", lambda e: self.on_cancel())
 
     def _setup_dnd(self):
         if DND_FILES is None or not hasattr(self.root, "drop_target_register"):
@@ -208,8 +234,8 @@ class MarkItDownApp:
         for i, item in enumerate(self.items):
             b = ctk.CTkButton(
                 self.list_frame, text=self._row_text(item), anchor="w",
-                fg_color="#264f78" if i == self.selected else "transparent",
-                text_color=BADGE_COLOR[item.status], hover_color="#333337",
+                fg_color=ROW_SEL if i == self.selected else "transparent",
+                text_color=BADGE_COLOR[item.status], hover_color=ROW_HOVER,
                 command=lambda idx=i: self.on_row_click(idx))
             b.pack(fill="x", pady=2)
             self.row_buttons.append(b)
@@ -221,7 +247,7 @@ class MarkItDownApp:
     def _update_row(self, i):
         item = self.items[i]
         b = self.row_buttons[i]
-        fg = "#264f78" if i == self.selected else "transparent"
+        fg = ROW_SEL if i == self.selected else "transparent"
         b.configure(text=self._row_text(item),
                     text_color=BADGE_COLOR[item.status], fg_color=fg)
 
@@ -231,13 +257,26 @@ class MarkItDownApp:
         self.count_var.set(f"{n} arquivo(s)" if n else "nenhum arquivo")
         running = self.total > 0
         pending = any(it.status in ("pendente", "erro") for it in self.items)
-        self.convert_btn.configure(
-            state="normal" if pending and not running else "disabled")
+        if running:
+            # Mesmo botao: durante o lote a acao util e parar, nao converter.
+            self.convert_btn.configure(
+                text="Cancelar", command=self.on_cancel,
+                state="disabled" if self.cancel.is_set() else "normal")
+        else:
+            self.convert_btn.configure(
+                text="Converter", command=self.on_convert,
+                state="normal" if pending else "disabled")
         self.clear_btn.configure(
             state="normal" if n and not running else "disabled")
         sel = self.items[self.selected] if self.selected is not None else None
-        self.open_btn.configure(
-            state="normal" if sel and sel.status == "ok" else "disabled")
+        done = bool(sel and sel.status == "ok")
+        self.open_btn.configure(state="normal" if done else "disabled")
+        if done:
+            self.copy_btn.configure(text=COPY_GLYPH)
+            # canto superior direito, deslocado pra nao cobrir a barra de rolagem
+            self.copy_btn.place(relx=1.0, y=8, x=-38, anchor="ne")
+        else:
+            self.copy_btn.place_forget()
 
     def _add_paths(self, paths):
         if not paths:
@@ -275,6 +314,34 @@ class MarkItDownApp:
         self._refresh_actions()
         self._render_preview(None)
         self.status_var.set("Pronto.")
+
+    def _sync_theme_btn(self):
+        dark = ctk.get_appearance_mode() == "Dark"
+        self.theme_btn.configure(text="☀" if dark else "☾")
+
+    def on_toggle_theme(self):
+        ctk.set_appearance_mode(
+            "light" if ctk.get_appearance_mode() == "Dark" else "dark")
+        self._sync_theme_btn()
+
+    def on_copy(self):
+        if self.selected is None:
+            return
+        item = self.items[self.selected]
+        if item.status != "ok":
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(item.markdown or "")
+        self.copy_btn.configure(text=COPIED_GLYPH)
+        self.root.after(1200, lambda: self.copy_btn.configure(text=COPY_GLYPH))
+        self.status_var.set("Markdown copiado.")
+
+    def on_cancel(self):
+        if not self.total:
+            return
+        self.cancel.set()
+        self.status_var.set("Cancelando… (termina o arquivo atual)")
+        self._refresh_actions()
 
     def on_open_folder(self):
         if self.selected is None:
@@ -316,6 +383,7 @@ class MarkItDownApp:
         if not pending:
             return
         self.done, self.total = 0, len(pending)
+        self.cancel.clear()
         self._refresh_actions()
         self.progress.set(0)
         self.progress.pack(fill="x", padx=16, pady=(0, 8), before=self.footer)
@@ -326,6 +394,8 @@ class MarkItDownApp:
     def _convert_worker(self, indices):
         # Sequencial: 1 erro nao para o lote. UI so e tocada via root.after.
         for i in indices:
+            if self.cancel.is_set():
+                break
             item = self.items[i]
             self.root.after(0, self._set_status, i, "convertendo")
             try:
@@ -371,10 +441,13 @@ class MarkItDownApp:
     def _on_batch_done(self):
         ok = sum(1 for it in self.items if it.status == "ok")
         err = sum(1 for it in self.items if it.status == "erro")
+        cancelled = self.cancel.is_set()
+        self.cancel.clear()
         self.done = self.total = 0
         self.progress.pack_forget()
         self._refresh_actions()
-        msg = f"✓ {ok} convertido(s), salvos ao lado do original"
+        msg = ("⊘ cancelado — " if cancelled else "")
+        msg += f"✓ {ok} convertido(s), salvos ao lado do original"
         if err:
             msg += f"  ·  ✕ {err} com erro"
         self.status_var.set(msg)
