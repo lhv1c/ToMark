@@ -16,7 +16,8 @@ import customtkinter as ctk
 
 from markitdown import MarkItDown
 
-from paths import next_selection, resolve_output_path
+from errors import error_text
+from paths import move_selection, next_selection, resolve_output_path
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -222,6 +223,8 @@ class MarkItDownApp:
         self.root.bind("<Delete>", lambda e: self.on_remove())
         self.root.bind("<Control-l>", lambda e: self.on_clear())
         self.root.bind("<Escape>", lambda e: self.on_cancel())
+        self.root.bind("<Up>", lambda e: self._move_selection(-1))
+        self.root.bind("<Down>", lambda e: self._move_selection(1))
 
     def _setup_dnd(self):
         if DND_FILES is None or not hasattr(self.root, "drop_target_register"):
@@ -267,6 +270,40 @@ class MarkItDownApp:
     def _set_row_bg(self, i, hover):
         if i < len(self.row_widgets):
             self.row_widgets[i][0].configure(fg_color=self._row_bg(i, hover))
+
+    def _move_selection(self, delta):
+        """Seta move a selecao da fila. As linhas nao recebem foco de Tab, entao
+        esta e a unica forma de chegar num arquivo sem mouse."""
+        # Bind no root tambem dispara com o cursor dentro do preview; la a seta
+        # tem que rolar o texto, nao trocar o arquivo debaixo do leitor.
+        focused = self.root.focus_get()
+        if focused is not None and str(focused).startswith(str(self.preview)):
+            return
+        i = move_selection(len(self.items), self.selected, delta)
+        if i is None or i == self.selected:
+            return
+        self.on_row_click(i)
+        self._scroll_into_view(i)
+
+    def _scroll_into_view(self, i):
+        """Sem isto a selecao sai da area visivel e a seta parece nao fazer
+        nada — justo no lote grande, que e o caso de uso central."""
+        # ponytail: _parent_canvas e privado do CustomTkinter. hasattr degrada
+        # pra "nao rola" se a versao mudar, no mesmo espirito dos outros
+        # fallbacks do app. Trocar por API publica quando existir uma.
+        canvas = getattr(self.list_frame, "_parent_canvas", None)
+        row = self.row_widgets[i][0]
+        if canvas is None or not row.winfo_ismapped():
+            return
+        self.list_frame.update_idletasks()
+        total = max(canvas.bbox("all")[3], 1)
+        top, bottom = canvas.yview()
+        y0 = row.winfo_y() / total
+        y1 = (row.winfo_y() + row.winfo_height()) / total
+        if y0 < top:
+            canvas.yview_moveto(y0)
+        elif y1 > bottom:
+            canvas.yview_moveto(y1 - (bottom - top))
 
     def _rebuild_list(self):
         for row, _, _ in self.row_widgets:
@@ -404,7 +441,8 @@ class MarkItDownApp:
         elif item.status == "ok":
             text = item.markdown or ""
         elif item.status == "erro":
-            text = f"[erro]\n{item.error}"
+            # Ja vem pronto do worker, com titulo e frase acionavel.
+            text = item.error or ""
         else:
             text = "Ainda não convertido."
         self.preview.configure(state="normal")
@@ -442,7 +480,10 @@ class MarkItDownApp:
                     f.write(markdown)
                 self.root.after(0, self._on_item_ok, i, markdown, out)
             except Exception as e:  # noqa: BLE001 — falha de 1 nao derruba o lote
-                self.root.after(0, self._on_item_err, i, str(e))
+                # Traduz aqui, com a excecao viva: o tipo dela e o sinal mais
+                # confiavel, e ele se perde em str(e).
+                self.root.after(0, self._on_item_err, i,
+                                error_text(e, item.path))
         self.root.after(0, self._on_batch_done)
 
     def _set_status(self, i, status):

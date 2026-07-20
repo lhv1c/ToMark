@@ -18,57 +18,47 @@ abaixo só fazem sentido contra as regras de lá.
 
 ## P1 — corrigir antes de distribuir
 
-### 1. Foco de teclado é destruído a cada mudança na lista
+### ~~1 e 2. Foco/seleção divergentes na fila~~ — RESOLVIDO, com ressalva
 
-**Onde:** `markitdown_gui.py`, `_rebuild_list()`
-**Categoria:** Acessibilidade · WCAG 2.4.3 / 2.1.1
+**A auditoria errou o diagnóstico.** Os dois achados partiam de "usuário tabula
+até uma linha". As linhas são `CTkFrame` sem `takefocus` — **nunca receberam
+foco de Tab**. Logo:
 
-`_rebuild_list()` chama `.destroy()` em todas as linhas e recria. Todo
-`_add_paths` e todo `on_remove` passa por lá.
+- Item 1 (foco destruído no `_rebuild_list`): a linha não tinha foco pra perder.
+- Item 2 (`Delete` apaga o arquivo errado): não reproduz. `Delete` sempre agiu
+  sobre o último clicado, que é o mesmo que está destacado. Sem divergência,
+  sem risco de apagar item errado.
 
-Usuário de teclado navega até um arquivo, aperta `Delete`, e o widget focado
-deixa de existir: o foco volta pro root e a posição na lista se perde. Apagar 3
-arquivos = tabular desde o início 3 vezes.
+O problema real por trás dos dois era mais simples e mais grave: **não existia
+navegação por teclado na fila.** Sem mouse, não se chegava a arquivo nenhum.
 
-**Correção:** em `on_remove`, atualizar as linhas existentes em vez de
-reconstruir; devolver o foco a `row_widgets[self.selected]` depois de qualquer
-rebuild.
+**Corrigido:** `move_selection()` em `paths.py` (puro, coberto por
+`test_output_path.py`), bind `<Up>`/`<Down>` e `_move_selection` /
+`_scroll_into_view` em `markitdown_gui.py`. A seta é guardada contra o preview
+— bind no root também dispara com o cursor no textbox, e lá a seta tem que
+rolar o texto, não trocar o arquivo debaixo do leitor.
 
-> Nota: a estrutura da linha mudou no `d936ec1`. Agora é
-> `(frame, badge, name)` em `self.row_widgets`, não mais um `CTkButton` em
-> `row_buttons`. O alvo de foco precisa ser decidido — provavelmente o frame,
-> que exige `takefocus=True`.
+> **Ressalva, ainda em aberto:** as linhas continuam sem `takefocus`. Um leitor
+> de tela não anuncia a fila. Se acessibilidade assistiva entrar no escopo, aí
+> sim vale `takefocus=True` + anel de foco distinto da seleção — e aí o item 1
+> original (devolver foco depois do rebuild) volta a valer.
 
-### 2. Seleção e foco divergem, e o `Delete` obedece o errado
+### ~~3. Exceção crua do Python como mensagem de erro~~ — RESOLVIDO
 
-**Onde:** `_bind_shortcuts()`, `on_remove()`, `on_row_click()`
-**Categoria:** Acessibilidade · WCAG 2.1.1
+`app/errors.py`: `friendly_error(exc)` casa por **nome de classe subindo a
+MRO** (não por `isinstance`), então o módulo não importa `markitdown` e o teste
+não carrega a dependência pesada. `error_text(exc, path)` monta o bloco do
+preview — título, frase acionável, detalhe técnico truncado em 300 chars por
+último. A tradução acontece no `_convert_worker`, com a exceção viva: o tipo é
+o sinal mais confiável e ele se perde em `str(e)`. Coberto por
+`app/test_errors.py`.
 
-`self.selected` só muda por clique. Tabular pelas linhas move o foco visual do
-SO, mas não a seleção.
-
-Usuário tabula até o arquivo 5, aperta `Delete`, e o app apaga o arquivo 2 — o
-último que ele clicou. Apagar o item errado, sem undo. É o achado mais próximo
-de P0; só não é porque a fila é reconstruível a partir dos arquivos originais.
-
-**Correção:** navegação por `<Up>`/`<Down>` movendo seleção e foco juntos, e
-`<FocusIn>` em cada linha sincronizando `self.selected`.
-
-### 3. Exceção crua do Python como mensagem de erro
-
-**Onde:** `_render_preview()` — `text = f"[erro]\n{item.error}"`
-**Categoria:** UX copy · viola anti-referência de `PRODUCT.md`
-
-`item.error` é `str(e)` vindo do markitdown. O usuário lê
-`FileNotFoundError: [WinError 2]...` ou stack de parser.
-
-`PRODUCT.md` lista **"ferramenta de dev"** como anti-referência explícita, e
-`DESIGN.md` repete como Don't. Este é o ponto onde o código contradiz o
-documento de forma mais direta.
-
-**Correção:** mapear as falhas comuns (arquivo corrompido, formato não
-suportado, PDF protegido por senha, arquivo em uso) para frases acionáveis em
-português. Texto técnico atrás de um "detalhes", nunca como mensagem principal.
+> **Achado colateral, não resolvido:** o markitdown quase não levanta exceção.
+> `.xyz` com bytes binários e `.pdf` corrompido **convertem sem erro** — ele cai
+> num leitor de texto puro e devolve lixo. Só `FileNotFoundError` disparou nos
+> testes reais. Ou seja: o caminho de erro agora está educado, mas o caminho de
+> **sucesso falso** é o mais provável na prática, e hoje não há nada avisando o
+> usuário de que o resultado é lixo. Vale um item próprio — ver item 12.
 
 ### 4. Atalhos e remoção não são descobríveis
 
@@ -146,6 +136,25 @@ a janela, redimensiona sempre.
 
 `DESIGN.md` registra 8px como o valor escolhido do projeto e chama a divergência
 de dívida. Achado da passada de `document`, não da auditoria original.
+
+---
+
+### 12. Sucesso falso: lixo convertido sem aviso
+
+**Onde:** `_convert_worker()` — nada valida o resultado de `md.convert()`
+**Categoria:** Confiança · descoberto ao implementar o item 3
+
+Medido, não suposto: `.xyz` binário e `.pdf` corrompido passam pelo markitdown
+**sem exceção**, tratados como texto puro. O app grava um `.md` de bytes ilegíveis
+e mostra badge de ok. O usuário não-técnico não tem como saber que falhou —
+para ele, converteu.
+
+Pior que o erro cru do item 3: erro cru ao menos avisava que algo deu errado.
+
+**Correção a decidir:** heurística barata no resultado (proporção de bytes não
+imprimíveis, markdown vazio ou quase) virando um estado "convertido com
+ressalva" — badge próprio, aviso no preview, arquivo gravado do mesmo jeito.
+Não inventar um validador por formato.
 
 ---
 
