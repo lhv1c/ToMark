@@ -168,10 +168,6 @@ class MarkItDownApp:
             hover_color=ACTION_HOVER, text_color="#ffffff",
             text_color_disabled=DISABLED)
         self.convert_btn.pack(side="right")
-        self.theme_btn = self._ghost_button(top, "", self.on_toggle_theme)
-        self.theme_btn.configure(width=40)
-        self.theme_btn.pack(side="right", padx=(0, 8))
-        self._sync_theme_btn()
 
         # meio: lista (esq) + preview (dir)
         mid = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -194,17 +190,33 @@ class MarkItDownApp:
             corner_radius=6, font=("Segoe UI Symbol", 14),
             fg_color=GHOST_HOVER, hover_color=ROW_HOVER,
             text_color=GHOST_TEXT, command=self.on_copy)
+        # Abrir pasta acompanha o Copiar: as duas acoes do resultado moram
+        # no canto do preview, nao mais no rodape. So aparecem quando ha .md.
+        self.open_btn = ctk.CTkButton(
+            self.preview, text="Abrir pasta", height=28, corner_radius=6,
+            fg_color=GHOST_HOVER, hover_color=ROW_HOVER,
+            text_color=GHOST_TEXT, command=self.on_open_folder)
 
-        # rodape: status + abrir pasta. A barra de progresso entra acima
-        # do rodape so enquanto o lote roda (pack before=self.footer).
+        # cheat-sheet de atalhos: linha discreta, sempre visivel, no rodape
+        # da janela. O publico e nao-tecnico — atalho invisivel nao existe.
+        shortcuts = ("Ctrl+O selecionar  ·  Ctrl+Enter converter  ·  "
+                     "Delete remover  ·  Ctrl+L limpar  ·  Esc cancelar")
+        ctk.CTkLabel(self.root, text=shortcuts, text_color=HINT,
+                     anchor="center").pack(side="bottom", pady=(0, 8))
+
+        # rodape: tema (cromo, longe do CTA) + status. Abrir pasta migrou pro
+        # canto do preview. A barra de progresso entra acima do rodape so
+        # enquanto o lote roda (pack before=self.footer).
         self.footer = ctk.CTkFrame(self.root, fg_color="transparent")
-        self.footer.pack(fill="x", side="bottom", padx=16, pady=(0, 12))
+        self.footer.pack(fill="x", side="bottom", padx=16, pady=(0, 8))
+        self.theme_btn = self._ghost_button(self.footer, "",
+                                            self.on_toggle_theme, height=28)
+        self.theme_btn.configure(width=40)
+        self.theme_btn.pack(side="left")
+        self._sync_theme_btn()
         self.status_var = tk.StringVar(value="Pronto.")
         ctk.CTkLabel(self.footer, textvariable=self.status_var, anchor="w",
-                     text_color=MUTED).pack(side="left")
-        self.open_btn = self._ghost_button(self.footer, "Abrir pasta",
-                                           self.on_open_folder, height=28)
-        self.open_btn.pack(side="right")
+                     text_color=MUTED).pack(side="left", padx=(8, 0))
 
         self.progress = ctk.CTkProgressBar(self.root, height=6,
                                            progress_color=ACTION)
@@ -344,13 +356,15 @@ class MarkItDownApp:
             state="normal" if n and not running else "disabled")
         sel = self.items[self.selected] if self.selected is not None else None
         done = bool(sel and sel.status == "ok")
-        self.open_btn.configure(state="normal" if done else "disabled")
         if done:
             self.copy_btn.configure(text=COPY_GLYPH)
-            # canto superior direito, deslocado pra nao cobrir a barra de rolagem
+            # canto superior direito, deslocado pra nao cobrir a barra de
+            # rolagem. Abrir pasta fica a esquerda do Copiar, sem sobrepor.
             self.copy_btn.place(relx=1.0, y=8, x=-38, anchor="ne")
+            self.open_btn.place(relx=1.0, y=8, x=-74, anchor="ne")
         else:
             self.copy_btn.place_forget()
+            self.open_btn.place_forget()
 
     def _add_paths(self, paths):
         if not paths:
@@ -505,7 +519,7 @@ class MarkItDownApp:
         self._tick()
         if self.selected == i:
             self._render_preview(item)
-            self.open_btn.configure(state="normal")
+            self._refresh_actions()  # faz Copiar/Abrir pasta surgirem no canto
 
     def _on_item_err(self, i, message):
         item = self.items[i]
