@@ -47,11 +47,11 @@ Para rodar direto pelo Python, sem empacotar:
 
 ### Linux
 
-**Pronto pra usar (AppImage):** baixe `Tomark-x86_64.AppImage` nos artifacts do
-workflow [`Build Linux AppImage`](../../actions/workflows/build-linux-appimage.yml)
-(ou na aba Releases, se publicado numa tag `v*`). É buildado em Debian 10
-"buster" (glibc 2.28), então roda em distros antigas — Linux Mint 20 em
-diante. (Mint 19.x tem glibc 2.27, uma versão abaixo — pode não rodar.)
+**Pronto pra usar (AppImage):** baixe
+[`Tomark-x86_64.AppImage` (v1.3.0)](https://github.com/lhv1c/ToMark/releases/download/v1.3.0/Tomark-x86_64.AppImage)
+— ou a versão mais recente na aba [**Releases**](../../releases). É buildado em
+Debian 10 "buster" (glibc 2.28), então roda em distros antigas — Linux Mint 20
+em diante. (Mint 19.x tem glibc 2.27, uma versão abaixo — pode não rodar.)
 
 ```bash
 chmod +x Tomark-x86_64.AppImage
